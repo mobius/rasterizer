@@ -543,8 +543,10 @@ void Rasterizer::precomputeRasterizationTable()
 }
 
 template<bool possiblyNearClipped>
-void Rasterizer::rasterize(const Occluder& occluder)
+int Rasterizer::rasterize(const Occluder& occluder)
 {
+    int resultPassed = 0;
+
 	const __m256i* vertexData = occluder.m_vertexData;
 	size_t packetCount = occluder.m_packetCount;
 
@@ -1017,6 +1019,7 @@ void Rasterizer::rasterize(const Occluder& occluder)
 #endif
 
 		int primitiveIdx = -1;
+        resultPassed = __popcnt(validMask);
 
 		// Loop over set bits
 		unsigned long zeroes;
@@ -1178,8 +1181,9 @@ void Rasterizer::rasterize(const Occluder& occluder)
 			}
 		}
 	}
+    return resultPassed;
 }
 
 // Force template instantiations
-template void Rasterizer::rasterize<true>(const Occluder& occluder);
-template void Rasterizer::rasterize<false>(const Occluder& occluder);
+template int Rasterizer::rasterize<true>(const Occluder& occluder);
+template int Rasterizer::rasterize<false>(const Occluder& occluder);

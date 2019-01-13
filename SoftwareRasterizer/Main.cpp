@@ -20,10 +20,13 @@
 
 using namespace DirectX;
 
-static constexpr uint32_t WINDOW_WIDTH = 1280;
-static constexpr uint32_t WINDOW_HEIGHT = 720;
+//static constexpr uint32_t WINDOW_WIDTH = 1280;
+//static constexpr uint32_t WINDOW_HEIGHT = 720;
 
-#if 1
+static constexpr uint32_t WINDOW_WIDTH = 128;
+static constexpr uint32_t WINDOW_HEIGHT = 128;
+
+#if 0
 #define SCENE "Castle"
 #define FOV 0.628f
 XMVECTOR g_cameraPosition = XMVectorSet(27.0f, 2.0f, 47.0f, 0.0f);
@@ -36,6 +39,8 @@ XMVECTOR g_cameraPosition = XMVectorSet(0.0f, 0.0f, 0.0f, 0.0f);
 XMVECTOR g_cameraDirection = XMVectorSet(1.0f, 0.0f, 0.0f, 0.0f);
 XMVECTOR g_upVector = XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f);
 #endif
+
+int nTotalTris = 0;
 
 std::unique_ptr<Rasterizer> g_rasterizer;
 
@@ -78,6 +83,8 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int)
     vertices.resize(numVertices);
     inFile.read(reinterpret_cast<char*>(&vertices[0]), numVertices * sizeof vertices[0]);
   }
+
+  nTotalTris = (int)indices.size() / 3;
 
   indices = QuadDecomposition::decompose(indices, vertices);
 
@@ -183,6 +190,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
       return _mm_comile_ss(_mm_dp_ps(dist1, dist1, 0x7f), _mm_dp_ps(dist2, dist2, 0x7f));
     });
 
+
+    int nOccluderQuadsNeedClip = 0;
+    int nOccluderQuadsNoClip = 0;
+    int nDepthFailedQuads = 0;
+
     for (const auto& occluder : g_occluders)
     {
       bool needsClipping;
@@ -190,12 +202,16 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
       {
         if (needsClipping)
         {
-          g_rasterizer->rasterize<true>(*occluder);
+            nOccluderQuadsNeedClip += g_rasterizer->rasterize<true>(*occluder);
         }
         else
         {
-          g_rasterizer->rasterize<false>(*occluder);
+            nOccluderQuadsNoClip += g_rasterizer->rasterize<false>(*occluder);
         }
+      }
+      else
+      {
+          nDepthFailedQuads += occluder->m_packetCount / 4;
       }
     }
 
@@ -210,8 +226,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     int fps = int(1000.0f / avgRasterTime);
 
     std::wstringstream title;
-    title << L"FPS: " << fps << std::setprecision(3) << L"      Rasterization time: " << avgRasterTime << "ms";
-    SetWindowText(hWnd, title.str().c_str());
+    title << L"FPS: " << fps << std::setprecision(3) << L" r " << std::setprecision(3) << avgRasterTime << "ms"
+        << " tris: " << nTotalTris << " q(df): " << nDepthFailedQuads
+        << " q(c): " << nOccluderQuadsNeedClip << " q(nc) " << nOccluderQuadsNoClip;
+    
+      SetWindowText(hWnd, title.str().c_str());
 
     std::vector<char> rawData;
     rawData.resize(WINDOW_WIDTH * WINDOW_HEIGHT * 4);

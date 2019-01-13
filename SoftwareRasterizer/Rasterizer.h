@@ -20,7 +20,7 @@ public:
 	void clear();
 
 	template<bool possiblyNearClipped>
-	void rasterize(const Occluder& occluder);
+	int rasterize(const Occluder& occluder);
 
 	bool queryVisibility(__m128 boundsMin, __m128 boundsMax, bool& needsClipping);
 

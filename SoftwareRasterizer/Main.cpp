@@ -6,6 +6,7 @@
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#pragma warning(disable:4996)
 
 #include <DirectXMath.h>
 #include <Windows.h>
@@ -18,15 +19,19 @@
 #include <sstream>
 #include <vector>
 
+#include "MaskedOcclusionCulling.h"
+
 using namespace DirectX;
 
-//static constexpr uint32_t WINDOW_WIDTH = 1280;
-//static constexpr uint32_t WINDOW_HEIGHT = 720;
-
+#if 1
+static constexpr uint32_t WINDOW_WIDTH = 1280;
+static constexpr uint32_t WINDOW_HEIGHT = 720;
+#else
 static constexpr uint32_t WINDOW_WIDTH = 128;
 static constexpr uint32_t WINDOW_HEIGHT = 128;
+#endif
 
-#if 0
+#if 1
 #define SCENE "Castle"
 #define FOV 0.628f
 XMVECTOR g_cameraPosition = XMVectorSet(27.0f, 2.0f, 47.0f, 0.0f);
@@ -44,6 +49,8 @@ int nTotalTris = 0;
 
 std::unique_ptr<Rasterizer> g_rasterizer;
 
+MaskedOcclusionCulling *g_moc = nullptr;
+
 HBITMAP g_hBitmap;
 std::vector<std::unique_ptr<Occluder>> g_occluders;
 
@@ -51,6 +58,12 @@ LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 
 int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int)
 {
+  AllocConsole();
+  freopen("CONOUT$", "w", stdout);
+  
+  // Flush denorms to zero to avoid performance issues with small values
+  _mm_setcsr(_mm_getcsr() | 0x8040);
+
   std::vector<__m128> vertices;
   std::vector<uint32_t> indices;
 
@@ -90,6 +103,19 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int)
 
   g_rasterizer = std::make_unique<Rasterizer>(WINDOW_WIDTH, WINDOW_HEIGHT);
 
+  g_moc = MaskedOcclusionCulling::Create(MaskedOcclusionCulling::SSE41);
+
+  MaskedOcclusionCulling::Implementation implementation = g_moc->GetImplementation();
+  switch (implementation) {
+      case MaskedOcclusionCulling::SSE2: printf("Using SSE2 version\n"); break;
+      case MaskedOcclusionCulling::SSE41: printf("Using SSE41 version\n"); break;
+      case MaskedOcclusionCulling::AVX2: printf("Using AVX2 version\n"); break;
+      case MaskedOcclusionCulling::AVX512: printf("Using AVX-512 version\n"); break;
+  }
+
+  g_moc->SetResolution(WINDOW_WIDTH, WINDOW_HEIGHT);
+  
+  
   // Pad to a multiple of 8 quads
   while (indices.size() % 32 != 0)
   {
@@ -161,7 +187,37 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int)
     DispatchMessage(&msg);
   }
 
+
+  // Destroy occlusion culling object and free hierarchical z-buffer
+  MaskedOcclusionCulling::Destroy(g_moc);
   return 0;
+}
+
+static void TonemapDepth(float *depth, unsigned char *image, int w, int h)
+{
+    // Find min/max w coordinate (discard cleared pixels)
+    float minW = FLT_MAX, maxW = 0.0f;
+    for (int i = 0; i < w*h; ++i)
+    {
+        if (depth[i] > 0.0f)
+        {
+            minW = std::min(minW, depth[i]);
+            maxW = std::max(maxW, depth[i]);
+        }
+    }
+
+    // Tonemap depth values
+    for (int i = 0; i < w*h; ++i)
+    {
+        int intensity = 0;
+        if (depth[i] > 0)
+            intensity = (unsigned char)(223.0*(depth[i] - minW) / (maxW - minW) + 32.0);
+
+        image[i * 4 + 0] = intensity;
+        image[i * 4 + 1] = intensity;
+        image[i * 4 + 2] = intensity;
+        image[i * 4 + 3] = 255;
+    }
 }
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
@@ -170,6 +226,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
   {
   case WM_PAINT:
   {
+
+    std::vector<char> rawData;
+    rawData.resize(WINDOW_WIDTH * WINDOW_HEIGHT * 4);
+
     XMMATRIX projMatrix = XMMatrixPerspectiveFovLH(FOV, float(WINDOW_WIDTH) / float(WINDOW_HEIGHT), 1.0f, 5000.0f);
     XMMATRIX viewMatrix = XMMatrixLookToLH(g_cameraPosition, g_cameraDirection, g_upVector);
     XMMATRIX viewProjection = (XMMatrixMultiply(viewMatrix, projMatrix));
@@ -178,18 +238,19 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
     memcpy(mvp, &viewProjection, 64);
 
+    // Sort front to back
+    std::sort(begin(g_occluders), end(g_occluders), [&](const auto& o1, const auto& o2) {
+        __m128 dist1 = _mm_sub_ps(o1->m_center, g_cameraPosition);
+        __m128 dist2 = _mm_sub_ps(o2->m_center, g_cameraPosition);
+
+        return _mm_comile_ss(_mm_dp_ps(dist1, dist1, 0x7f), _mm_dp_ps(dist2, dist2, 0x7f));
+    });
+
+#if 1
+
     auto raster_start = std::chrono::high_resolution_clock::now();
     g_rasterizer->clear();
     g_rasterizer->setModelViewProjection(mvp);
-
-    // Sort front to back
-    std::sort(begin(g_occluders), end(g_occluders), [&](const auto& o1, const auto& o2) {
-      __m128 dist1 = _mm_sub_ps(o1->m_center, g_cameraPosition);
-      __m128 dist2 = _mm_sub_ps(o2->m_center, g_cameraPosition);
-
-      return _mm_comile_ss(_mm_dp_ps(dist1, dist1, 0x7f), _mm_dp_ps(dist2, dist2, 0x7f));
-    });
-
 
     int nOccluderQuadsNeedClip = 0;
     int nOccluderQuadsNoClip = 0;
@@ -230,12 +291,55 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         << " tris: " << nTotalTris << " q(df): " << nDepthFailedQuads
         << " q(c): " << nOccluderQuadsNeedClip << " q(nc) " << nOccluderQuadsNoClip;
     
-      SetWindowText(hWnd, title.str().c_str());
-
-    std::vector<char> rawData;
-    rawData.resize(WINDOW_WIDTH * WINDOW_HEIGHT * 4);
+    SetWindowText(hWnd, title.str().c_str());
 
     g_rasterizer->readBackDepth(&*rawData.begin());
+
+#else
+    auto raster_start = std::chrono::high_resolution_clock::now();
+
+    g_moc->ClearBuffer();
+    
+    struct ClipspaceVertex { float x, y, z, w; };
+
+    // A quad completely within the view frustum
+    ClipspaceVertex quadVerts[] = { { -150, -150, 0, 200 },{ -10, -65, 0, 75 },{ 0, 0, 0, 20 },{ -40, 10, 0, 50 } };
+    unsigned int quadIndices[] = { 0, 1, 2, 0, 2, 3 };
+
+    for (const auto& occluder : g_occluders)
+    {
+        MaskedOcclusionCulling::TransformVertices(mvp, occluder->m_vertexData)
+        occluder->
+        g_moc->RenderTriangles((float*)quadVerts, quadIndices, 2, nullptr, MaskedOcclusionCulling::BACKFACE_CCW, MaskedOcclusionCulling::CLIP_PLANE_NONE);
+    }
+    
+
+    // Render the quad. As an optimization, indicate that clipping is not required as it is 
+    // completely inside the view frustum
+    
+
+    auto raster_end = std::chrono::high_resolution_clock::now();
+
+    static float *perPixelZBuffer = nullptr;
+    if(perPixelZBuffer == nullptr)
+        perPixelZBuffer = new float[WINDOW_WIDTH*WINDOW_HEIGHT];
+
+    g_moc->ComputePixelDepthBuffer(perPixelZBuffer, false);
+    TonemapDepth(perPixelZBuffer, (uint8_t*)&*rawData.begin(), WINDOW_WIDTH, WINDOW_HEIGHT);
+
+    float rasterTime = std::chrono::duration<float, std::milli>(raster_end - raster_start).count();
+    static float avgRasterTime = rasterTime;
+
+    float alpha = 0.0035f;
+    avgRasterTime = rasterTime * alpha + avgRasterTime * (1.0f - alpha);
+
+    int fps = int(1000.0f / avgRasterTime);
+
+    std::wstringstream title;
+    title << L"FPS: " << fps << std::setprecision(3) << L" r " << std::setprecision(3) << avgRasterTime << "ms";
+    SetWindowText(hWnd, title.str().c_str());
+
+#endif
 
     PAINTSTRUCT ps;
     HDC hdc = BeginPaint(hWnd, &ps);

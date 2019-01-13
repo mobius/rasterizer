@@ -290,9 +290,47 @@ bool Rasterizer::query2D(uint32_t minX, uint32_t maxX, uint32_t minY, uint32_t m
 	return false;
 }
 
+float* depthBuffer = 0;
+
+static void TonemapDepth(float *depth, unsigned char *image, int w, int h)
+{
+    // Find min/max w coordinate (discard cleared pixels)
+    float minW = FLT_MAX, maxW = 0.0f;
+    for (int i = 0; i < w*h; ++i)
+    {
+        if (depth[i] > 0.0f)
+        {
+            minW = std::min(minW, depth[i]);
+            maxW = std::max(maxW, depth[i]);
+        }
+    }
+
+    // Tonemap depth values
+
+    for (int i = 0; i < w*h; ++i)
+    {
+        int intensity = 0;
+        if (depth[i] > 0)
+            intensity = (unsigned char)(223.0*(depth[i] - minW) / (maxW - minW) + 32.0);
+
+        intensity <<= 1;
+
+        image[i * 4 + 0] = intensity;
+        image[i * 4 + 1] = intensity;
+        image[i * 4 + 2] = intensity;
+        image[i * 4 + 3] = 255;
+    }
+}
+
+
 void Rasterizer::readBackDepth(void* target) const
 {
-	const float bias = 3.9623753e+28f; // 1.0f / floatCompressionBias
+    if(depthBuffer == 0)
+    {
+        depthBuffer = new float[m_height*m_width];
+    }
+    
+    const float bias = 3.9623753e+28f; // 1.0f / floatCompressionBias
 
 	for (uint32_t blockY = 0; blockY < m_blocksY; ++blockY)
 	{
@@ -316,6 +354,11 @@ void Rasterizer::readBackDepth(void* target) const
 				for (uint32_t x = 0; x < 8; ++x)
 				{
 					float l = linDepthA[x];
+                    
+                    float& fd = depthBuffer[8 * blockX + x + m_width * (8 * blockY + y)];
+
+                    fd = l;
+                    /*
 					uint32_t d = static_cast<uint32_t>(100 * 256 * l);
 					uint8_t v0 = uint8_t(d / 100);
 					uint8_t v1 = d % 256;
@@ -324,10 +367,13 @@ void Rasterizer::readBackDepth(void* target) const
 					dest[4 * x + 1] = v1;
 					dest[4 * x + 2] = 0;
 					dest[4 * x + 3] = 255;
+                    */
 				}
 			}
 		}
 	}
+
+    TonemapDepth(depthBuffer, (uint8_t*)target, m_width, m_height);
 }
 
 float Rasterizer::decompressFloat(uint16_t depth)

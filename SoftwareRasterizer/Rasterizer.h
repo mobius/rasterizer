@@ -56,7 +56,7 @@ private:
 	std::vector<int64_t> m_precomputedRasterTables;
 	std::vector<__m128i> m_depthBuffer;
 	std::vector<uint16_t> m_hiZ;
-
+    
 	uint32_t m_width;
 	uint32_t m_height;
 	uint32_t m_blocksX;

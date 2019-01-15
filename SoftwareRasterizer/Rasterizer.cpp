@@ -313,7 +313,7 @@ static void TonemapDepth(float *depth, unsigned char *image, int w, int h)
         if (depth[i] > 0)
             intensity = (unsigned char)(223.0*(depth[i] - minW) / (maxW - minW) + 32.0);
 
-        intensity <<= 1;
+        //intensity <<= 1;
 
         image[i * 4 + 0] = intensity;
         image[i * 4 + 1] = intensity;

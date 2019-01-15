@@ -18,6 +18,9 @@ struct Occluder
 
 	__m256i* m_vertexData;
 	uint32_t m_packetCount;
+
+    std::vector<__m128> m_vertexDataRaw;
+
 };
 
 

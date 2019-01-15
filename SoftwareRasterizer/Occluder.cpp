@@ -105,6 +105,8 @@ std::unique_ptr<Occluder> Occluder::bake(const std::vector<__m128>& vertices, __
   occluder->m_packetCount = 0;
   occluder->m_vertexData = reinterpret_cast<__m256i*>(_aligned_malloc(orderedVertices.size() * 4, 32));
 
+  occluder->m_vertexDataRaw = orderedVertices;
+
   for (size_t i = 0; i < orderedVertices.size(); i += 32)
   {
 	  __m128i v[8];

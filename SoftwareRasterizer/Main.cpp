@@ -19,11 +19,17 @@
 #include <sstream>
 #include <vector>
 
+#define USE_MOC
+//#define USE_OBJ
+
+#define TINYOBJLOADER_IMPLEMENTATION
+#include "tiny_obj_loader.h"
+
 #include "MaskedOcclusionCulling.h"
 
 using namespace DirectX;
 
-#if 1
+#if 0
 static constexpr uint32_t WINDOW_WIDTH = 1280;
 static constexpr uint32_t WINDOW_HEIGHT = 720;
 #else
@@ -31,6 +37,7 @@ static constexpr uint32_t WINDOW_WIDTH = 128;
 static constexpr uint32_t WINDOW_HEIGHT = 128;
 #endif
 
+#ifndef USE_OBJ
 #if 1
 #define SCENE "Castle"
 #define FOV 0.628f
@@ -41,6 +48,12 @@ XMVECTOR g_upVector = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
 #define SCENE "Sponza"
 #define FOV 1.04f
 XMVECTOR g_cameraPosition = XMVectorSet(0.0f, 0.0f, 0.0f, 0.0f);
+XMVECTOR g_cameraDirection = XMVectorSet(1.0f, 0.0f, 0.0f, 0.0f);
+XMVECTOR g_upVector = XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f);
+#endif
+#else
+#define FOV 1.04f
+XMVECTOR g_cameraPosition = XMVectorSet(-3.0f, 0.0f, 0.0f, 0.0f);
 XMVECTOR g_cameraDirection = XMVectorSet(1.0f, 0.0f, 0.0f, 0.0f);
 XMVECTOR g_upVector = XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f);
 #endif
@@ -67,6 +80,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int)
   std::vector<__m128> vertices;
   std::vector<uint32_t> indices;
 
+#ifndef USE_OBJ
   {
     std::stringstream fileName;
     fileName << SCENE << "/IndexBuffer.bin";
@@ -96,7 +110,38 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int)
     vertices.resize(numVertices);
     inFile.read(reinterpret_cast<char*>(&vertices[0]), numVertices * sizeof vertices[0]);
   }
+#else
+  tinyobj::attrib_t attrib;
+  std::vector<tinyobj::shape_t> shapes;
+  std::vector<tinyobj::material_t> materials;
 
+  std::string err;
+  bool ret = tinyobj::LoadObj(&attrib, &shapes, &materials, &err, "Models/cube.obj", nullptr, true);
+  
+  vertices.resize(attrib.vertices.size()/3);
+  for( size_t ii = 0; ii < vertices.size(); ++ii )
+  {
+      vertices[ii] = { attrib.vertices[3 * ii], attrib.vertices[3 * ii + 1], attrib.vertices[3 * ii + 2], 1.0f};
+  }
+
+  for(size_t i = 0; i < shapes.size(); i++ )
+  {
+      size_t index_offset = 0;
+      for( size_t f = 0; f < shapes[i].mesh.num_face_vertices.size(); f++ )
+      {
+          size_t fnum = shapes[i].mesh.num_face_vertices[f];
+
+          for( size_t v = 0; v < fnum; v++ )
+          {
+              tinyobj::index_t idx = shapes[i].mesh.indices[index_offset + v];
+              indices.push_back(idx.vertex_index);
+          }
+          //std::swap(indices[index_offset + 1], indices[index_offset + 2]);
+          index_offset += fnum;
+      }
+  }
+  
+#endif
   nTotalTris = (int)indices.size() / 3;
 
   indices = QuadDecomposition::decompose(indices, vertices);
@@ -230,13 +275,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     std::vector<char> rawData;
     rawData.resize(WINDOW_WIDTH * WINDOW_HEIGHT * 4);
 
-    XMMATRIX projMatrix = XMMatrixPerspectiveFovLH(FOV, float(WINDOW_WIDTH) / float(WINDOW_HEIGHT), 1.0f, 5000.0f);
-    XMMATRIX viewMatrix = XMMatrixLookToLH(g_cameraPosition, g_cameraDirection, g_upVector);
-    XMMATRIX viewProjection = (XMMatrixMultiply(viewMatrix, projMatrix));
-
-    float mvp[16];
-
-    memcpy(mvp, &viewProjection, 64);
+   
 
     // Sort front to back
     std::sort(begin(g_occluders), end(g_occluders), [&](const auto& o1, const auto& o2) {
@@ -246,11 +285,19 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         return _mm_comile_ss(_mm_dp_ps(dist1, dist1, 0x7f), _mm_dp_ps(dist2, dist2, 0x7f));
     });
 
-#if 1
+#ifndef USE_MOC
+    XMMATRIX projMatrix = XMMatrixPerspectiveFovLH(FOV, float(WINDOW_WIDTH) / float(WINDOW_HEIGHT), 1.0f, 5000.0f);
+    XMMATRIX viewMatrix = XMMatrixLookToLH(g_cameraPosition, g_cameraDirection, g_upVector);
+    XMMATRIX viewProjection = (XMMatrixMultiply(viewMatrix, projMatrix));
 
-    auto raster_start = std::chrono::high_resolution_clock::now();
+    float mvp[16];
+
+    memcpy(mvp, &viewProjection, 64);
+
     g_rasterizer->clear();
     g_rasterizer->setModelViewProjection(mvp);
+
+    auto raster_start = std::chrono::high_resolution_clock::now();
 
     int nOccluderQuadsNeedClip = 0;
     int nOccluderQuadsNoClip = 0;
@@ -296,38 +343,55 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     g_rasterizer->readBackDepth(&*rawData.begin());
 
 #else
-    auto raster_start = std::chrono::high_resolution_clock::now();
+    XMMATRIX projMatrix = XMMatrixPerspectiveFovLH(FOV, float(WINDOW_WIDTH) / float(WINDOW_HEIGHT), 1.0f, 5000.0f);
+    XMMATRIX viewMatrix = XMMatrixLookToLH(g_cameraPosition, g_cameraDirection, g_upVector);
+    XMMATRIX viewProjection = (XMMatrixMultiply(viewMatrix, projMatrix));
+    //XMMATRIX vpTransposed = XMMatrixTranspose(viewProjection);
+
+    float mvp[16];
+
+    memcpy(mvp, &viewProjection, 64);
 
     g_moc->ClearBuffer();
     
-    struct ClipspaceVertex { float x, y, z, w; };
+    float rasterTime = 0.f;
 
+#if 0
+    struct ClipspaceVertex { float x, y, z, w; };
     // A quad completely within the view frustum
     ClipspaceVertex quadVerts[] = { { -150, -150, 0, 200 },{ -10, -65, 0, 75 },{ 0, 0, 0, 20 },{ -40, 10, 0, 50 } };
     unsigned int quadIndices[] = { 0, 1, 2, 0, 2, 3 };
 
+    g_moc->RenderTriangles((float*)&quadVerts, quadIndices, 2);
+#else
     for (const auto& occluder : g_occluders)
     {
-        MaskedOcclusionCulling::TransformVertices(mvp, occluder->m_vertexData)
-        occluder->
-        g_moc->RenderTriangles((float*)quadVerts, quadIndices, 2, nullptr, MaskedOcclusionCulling::BACKFACE_CCW, MaskedOcclusionCulling::CLIP_PLANE_NONE);
+        uint32_t* quadIndices = new uint32_t[6 * occluder->m_vertexDataRaw.size()];
+        for( int ii = 0, j = 0; ii < occluder->m_vertexDataRaw.size(); ii += 4, j += 6 )
+        {
+            quadIndices[j+ 0] = ii;
+            quadIndices[j + 1] = ii + 1;
+            quadIndices[j + 2] = ii + 2;
+            quadIndices[j + 3] = ii;
+            quadIndices[j + 4] = ii + 2;
+            quadIndices[j + 5] = ii + 3;
+        }
+        auto raster_start = std::chrono::high_resolution_clock::now();
+        g_moc->RenderTriangles((float*)occluder->m_vertexDataRaw.data(), quadIndices, (uint32_t)occluder->m_vertexDataRaw.size()/2, mvp, MaskedOcclusionCulling::BACKFACE_CW, MaskedOcclusionCulling::CLIP_PLANE_ALL, MaskedOcclusionCulling::VertexLayout(16, 4, 8));
+        auto raster_end = std::chrono::high_resolution_clock::now();
+        rasterTime += std::chrono::duration<float, std::milli>(raster_end - raster_start).count();
+
+        delete[] quadIndices;
     }
-    
-
-    // Render the quad. As an optimization, indicate that clipping is not required as it is 
-    // completely inside the view frustum
-    
-
-    auto raster_end = std::chrono::high_resolution_clock::now();
+#endif
 
     static float *perPixelZBuffer = nullptr;
     if(perPixelZBuffer == nullptr)
         perPixelZBuffer = new float[WINDOW_WIDTH*WINDOW_HEIGHT];
 
-    g_moc->ComputePixelDepthBuffer(perPixelZBuffer, false);
+    g_moc->ComputePixelDepthBuffer(perPixelZBuffer, true);
     TonemapDepth(perPixelZBuffer, (uint8_t*)&*rawData.begin(), WINDOW_WIDTH, WINDOW_HEIGHT);
 
-    float rasterTime = std::chrono::duration<float, std::milli>(raster_end - raster_start).count();
     static float avgRasterTime = rasterTime;
 
     float alpha = 0.0035f;

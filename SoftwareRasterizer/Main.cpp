@@ -19,7 +19,7 @@
 #include <sstream>
 #include <vector>
 
-#define USE_MOC
+//#define USE_MOC
 //#define USE_OBJ
 
 #define TINYOBJLOADER_IMPLEMENTATION
@@ -29,7 +29,7 @@
 
 using namespace DirectX;
 
-#if 0
+#if 1
 static constexpr uint32_t WINDOW_WIDTH = 1280;
 static constexpr uint32_t WINDOW_HEIGHT = 720;
 #else

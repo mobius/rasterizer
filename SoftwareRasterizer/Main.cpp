@@ -286,6 +286,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     });
 
 #ifndef USE_MOC
+    XMMATRIX transMatrix = XMMatrixTranslation(1, 2, 3);
     XMMATRIX projMatrix = XMMatrixPerspectiveFovLH(FOV, float(WINDOW_WIDTH) / float(WINDOW_HEIGHT), 1.0f, 5000.0f);
     XMMATRIX viewMatrix = XMMatrixLookToLH(g_cameraPosition, g_cameraDirection, g_upVector);
     XMMATRIX viewProjection = (XMMatrixMultiply(viewMatrix, projMatrix));

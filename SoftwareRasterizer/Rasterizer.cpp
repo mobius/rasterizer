@@ -27,14 +27,16 @@ Rasterizer::Rasterizer(uint32_t width, uint32_t height) : m_width(width), m_heig
 
 void Rasterizer::setModelViewProjection(const float* matrix)
 {
+    // # d3d style view projection matrix; DirectXMath use row major, pre-mul, so last row is translation
     __m128 mat0 = _mm_loadu_ps(matrix + 0);
     __m128 mat1 = _mm_loadu_ps(matrix + 4);
     __m128 mat2 = _mm_loadu_ps(matrix + 8);
     __m128 mat3 = _mm_loadu_ps(matrix + 12);
 
+    // # transposed to behave as OGL
     _MM_TRANSPOSE4_PS(mat0, mat1, mat2, mat3);
 
-    // Store rows
+    // Store as rows
     _mm_storeu_ps(m_modelViewProjectionRaw + 0, mat0);
     _mm_storeu_ps(m_modelViewProjectionRaw + 4, mat1);
     _mm_storeu_ps(m_modelViewProjectionRaw + 8, mat2);
@@ -69,33 +71,34 @@ bool Rasterizer::queryVisibility(__m128 boundsMin, __m128 boundsMax, bool& needs
     __m128 center = _mm_add_ps(boundsMax, boundsMin);	// Bounding box center times 2 - but since W = 2, the plane equations work out correctly
     __m128 minusZero = _mm_set1_ps(-0.0f);
 
+    //# OGL way
     __m128 row0 = _mm_loadu_ps(m_modelViewProjectionRaw + 0);
     __m128 row1 = _mm_loadu_ps(m_modelViewProjectionRaw + 4);
     __m128 row2 = _mm_loadu_ps(m_modelViewProjectionRaw + 8);
     __m128 row3 = _mm_loadu_ps(m_modelViewProjectionRaw + 12);
 
-    // Compute distance from each frustum plane
-    __m128 plane0 = _mm_add_ps(row3, row0);
+    // Compute distance from each frustum plane  # OGL way
+    __m128 plane0 = _mm_add_ps(row3, row0); // # left
     __m128 offset0 = _mm_add_ps(center, _mm_xor_ps(extents, _mm_and_ps(plane0, minusZero)));
     __m128 dist0 = _mm_dp_ps(plane0, offset0, 0xff);
 
-    __m128 plane1 = _mm_sub_ps(row3, row0);
+    __m128 plane1 = _mm_sub_ps(row3, row0); // # right
     __m128 offset1 = _mm_add_ps(center, _mm_xor_ps(extents, _mm_and_ps(plane1, minusZero)));
     __m128 dist1 = _mm_dp_ps(plane1, offset1, 0xff);
 
-    __m128 plane2 = _mm_add_ps(row3, row1);
+    __m128 plane2 = _mm_add_ps(row3, row1); // # bottom
     __m128 offset2 = _mm_add_ps(center, _mm_xor_ps(extents, _mm_and_ps(plane2, minusZero)));
     __m128 dist2 = _mm_dp_ps(plane2, offset2, 0xff);
 
-    __m128 plane3 = _mm_sub_ps(row3, row1);
+    __m128 plane3 = _mm_sub_ps(row3, row1); // # top
     __m128 offset3 = _mm_add_ps(center, _mm_xor_ps(extents, _mm_and_ps(plane3, minusZero)));
     __m128 dist3 = _mm_dp_ps(plane3, offset3, 0xff);
 
-    __m128 plane4 = _mm_add_ps(row3, row2);
+    __m128 plane4 = _mm_add_ps(row3, row2); // # near
     __m128 offset4 = _mm_add_ps(center, _mm_xor_ps(extents, _mm_and_ps(plane4, minusZero)));
     __m128 dist4 = _mm_dp_ps(plane4, offset4, 0xff);
 
-    __m128 plane5 = _mm_sub_ps(row3, row2);
+    __m128 plane5 = _mm_sub_ps(row3, row2); // # far
     __m128 offset5 = _mm_add_ps(center, _mm_xor_ps(extents, _mm_and_ps(plane5, minusZero)));
     __m128 dist5 = _mm_dp_ps(plane5, offset5, 0xff);
 

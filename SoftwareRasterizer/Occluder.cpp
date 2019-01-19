@@ -22,6 +22,8 @@ std::unique_ptr<Occluder> Occluder::bake(const std::vector<__m128>& vertices, __
 
   std::vector<__m128> centroids;
   std::vector<uint32_t> centroidAssignment;
+
+  // 
   centroids.push_back(_mm_setr_ps(+1.0f, 0.0f, 0.0f, 0.0f));
   centroids.push_back(_mm_setr_ps(0.0f, +1.0f, 0.0f, 0.0f));
   centroids.push_back(_mm_setr_ps(0.0f, 0.0f, +1.0f, 0.0f));
@@ -30,6 +32,7 @@ std::unique_ptr<Occluder> Occluder::bake(const std::vector<__m128>& vertices, __
   centroids.push_back(_mm_setr_ps(-1.0f, 0.0f, 0.0f, 0.0f));
 
   centroidAssignment.resize(vertices.size() / 4);
+
 
   bool anyChanged = true;
   for (int iter = 0; iter < 10 && anyChanged; ++iter)
@@ -59,6 +62,7 @@ std::unique_ptr<Occluder> Occluder::bake(const std::vector<__m128>& vertices, __
       }
     }
 
+    //# based on centroidAssignment, recompute centroid direction by average quadNormals assigned to this centroid direction
     for (int k = 0; k < centroids.size(); ++k)
     {
       centroids[k] = _mm_setzero_ps();
@@ -77,6 +81,7 @@ std::unique_ptr<Occluder> Occluder::bake(const std::vector<__m128>& vertices, __
     }
   }
 
+  //# assign quad to different centroid direction
   std::vector<__m128> orderedVertices;
   for (uint32_t k = 0; k < centroids.size(); ++k)
   {
@@ -107,35 +112,37 @@ std::unique_ptr<Occluder> Occluder::bake(const std::vector<__m128>& vertices, __
 
   occluder->m_vertexDataRaw = orderedVertices;
 
+  // # do 8 quads 
   for (size_t i = 0; i < orderedVertices.size(); i += 32)
   {
-      __m128i v[8];
+    __m128i v[8];
 
     for (auto j = 0; j < 4; ++j)
     {
       // Transform into [0,1] space relative to bounding box
-      __m128 v0 = _mm_mul_ps(_mm_sub_ps(orderedVertices[i + j +  0], refMin), invExtents);
+      __m128 v0 = _mm_mul_ps(_mm_sub_ps(orderedVertices[i + j +  0], refMin), invExtents);  // # first quad v[j]
       __m128 v1 = _mm_mul_ps(_mm_sub_ps(orderedVertices[i + j +  4], refMin), invExtents);
       __m128 v2 = _mm_mul_ps(_mm_sub_ps(orderedVertices[i + j +  8], refMin), invExtents);
       __m128 v3 = _mm_mul_ps(_mm_sub_ps(orderedVertices[i + j + 12], refMin), invExtents);
       __m128 v4 = _mm_mul_ps(_mm_sub_ps(orderedVertices[i + j + 16], refMin), invExtents);
       __m128 v5 = _mm_mul_ps(_mm_sub_ps(orderedVertices[i + j + 20], refMin), invExtents);
       __m128 v6 = _mm_mul_ps(_mm_sub_ps(orderedVertices[i + j + 24], refMin), invExtents);
-      __m128 v7 = _mm_mul_ps(_mm_sub_ps(orderedVertices[i + j + 28], refMin), invExtents);
+      __m128 v7 = _mm_mul_ps(_mm_sub_ps(orderedVertices[i + j + 28], refMin), invExtents);  // # 8th quad v[j]
 
-      // Transpose into [xxxx][yyyy][zzzz][wwww]
+      // Transpose into [xxxx][yyyy][zzzz][wwww] 
       _MM_TRANSPOSE4_PS(v0, v1, v2, v3);
       _MM_TRANSPOSE4_PS(v4, v5, v6, v7);
 
-      // Scale and truncate to int
-      v0 = _mm_fmadd_ps(v0, scalingX, half);
+      // Scale and truncate to int 
+      v0 = _mm_fmadd_ps(v0, scalingX, half);    //# v0 = first 4 quad vertex [xxxx]
       v1 = _mm_fmadd_ps(v1, scalingY, half);
       v2 = _mm_fmadd_ps(v2, scalingZ, half);
 
-      v4 = _mm_fmadd_ps(v4, scalingX, half);
+      v4 = _mm_fmadd_ps(v4, scalingX, half);    //# v4 = next 4 quad vertex [xxxx]
       v5 = _mm_fmadd_ps(v5, scalingY, half);
       v6 = _mm_fmadd_ps(v6, scalingZ, half);
 
+      // # X -> [-1023, 1023] in power(2,11), Y in [0, 2048], Z in [0, 1024]
       __m128i X0 = _mm_sub_epi32(_mm_cvttps_epi32(v0), _mm_set1_epi32(1024));
       __m128i Y0 = _mm_cvttps_epi32(v1);
       __m128i Z0 = _mm_cvttps_epi32(v2);
@@ -144,18 +151,18 @@ std::unique_ptr<Occluder> Occluder::bake(const std::vector<__m128>& vertices, __
       __m128i Y1 = _mm_cvttps_epi32(v5);
       __m128i Z1 = _mm_cvttps_epi32(v6);
 
-      // Pack to 11/11/10 format
-      __m128i XYZ0 = _mm_or_si128(_mm_slli_epi32(X0, 21), _mm_or_si128(_mm_slli_epi32(Y0, 10), Z0));
-      __m128i XYZ1 = _mm_or_si128(_mm_slli_epi32(X1, 21), _mm_or_si128(_mm_slli_epi32(Y1, 10), Z1));
+      // Pack to 11/11/10 format (X keep sign)
+      __m128i XYZ0 = _mm_or_si128(_mm_slli_epi32(X0, 21), _mm_or_si128(_mm_slli_epi32(Y0, 10), Z0));    // # first 4 quad jth vtx compressed [(xyz)(xyz)(xyz)(xyz)] each xyz in 11/11/10
+      __m128i XYZ1 = _mm_or_si128(_mm_slli_epi32(X1, 21), _mm_or_si128(_mm_slli_epi32(Y1, 10), Z1));    // # second 4 quad
 
       v[2 * j + 0] = XYZ0;
       v[2 * j + 1] = XYZ1;
     }
 
-    occluder->m_vertexData[occluder->m_packetCount++] = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(v + 0));
-    occluder->m_vertexData[occluder->m_packetCount++] = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(v + 2));
-    occluder->m_vertexData[occluder->m_packetCount++] = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(v + 4));
-    occluder->m_vertexData[occluder->m_packetCount++] = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(v + 6));
+    occluder->m_vertexData[occluder->m_packetCount++] = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(v + 0));    // 8 quads : first vtx in quad
+    occluder->m_vertexData[occluder->m_packetCount++] = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(v + 2));    // 8 quads : 2nd vtx in quad
+    occluder->m_vertexData[occluder->m_packetCount++] = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(v + 4));    // 8 quads : 3rd vtx in quad
+    occluder->m_vertexData[occluder->m_packetCount++] = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(v + 6));    // 8 quads : 4th vtx in quad
   }
 
   occluder->m_refMin = refMin;

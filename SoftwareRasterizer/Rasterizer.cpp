@@ -562,7 +562,7 @@ void Rasterizer::precomputeRasterizationTable()
 
         for (uint32_t j = 0; j < offsetResolution; ++j)
         {
-            float offset = -0.6f + 1.2f * float(j) / (angularResolution - 1);
+            float offset = -0.6f + 1.2f * float(j) / (offsetResolution - 1);
 
             uint32_t offsetLookup = quantizeOffsetLookup(offset);
 
